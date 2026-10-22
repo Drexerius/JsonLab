@@ -1,0 +1,169 @@
+@page "/"
+@implements IAsyncDisposable
+@using System.Security.Claims
+@using System.Text
+@using System.Text.Json
+@using JsonLab.Domain
+@using JsonLab.Application
+@using Microsoft.AspNetCore.Components.Authorization
+@inject WorkspaceService Workspace
+@inject AuthenticationStateProvider Authentication
+@inject IJSRuntime JS
+@inject ILogger<Home> Logger
+<PageTitle>Редактор · JSON Lab</PageTitle>
+<div class="workspace">
+<aside class="library">
+    <div class="section-heading"><span>БИБЛИОТЕКА</span><button class="icon-button" title="Обновить библиотеку" aria-label="Обновить библиотеку" @onclick="Refresh" disabled="@busy">↻</button></div>
+    <button class="primary full" @onclick="NewDocument" disabled="@busy">＋ Новый документ</button>
+    @if (owner == Guid.Empty) {
+        <div class="library-empty"><span class="large-symbol">▤</span><h3>Ваши документы</h3><p>Войдите, чтобы сохранять работу и организовывать документы.</p><a href="/account">Войти в аккаунт →</a></div>
+    } else {
+        <input class="search" aria-label="Поиск документов" placeholder="Поиск по названию или тегу" @bind="search" @bind:event="oninput" />
+        <button class="folder-link @(folderFilter == null ? "selected" : "")" @onclick="() => folderFilter = null">▤ Все документы <span>@documents.Count</span></button>
+        @foreach (var folder in folders) {
+            <div class="folder-row"><button class="folder-link @(folderFilter == folder.Id ? "selected" : "")" @onclick="() => folderFilter = folder.Id">▱ @folder.Name</button><button class="icon-button" aria-label="@($"Переименовать папку {folder.Name}")" @onclick="() => EditFolder(folder)">✎</button><button class="icon-button" aria-label="@($"Удалить папку {folder.Name}")" @onclick="() => DeleteFolder(folder)">×</button></div>
+        }
+        <div class="folder-create"><input aria-label="Название папки" placeholder="@(editingFolder == null ? "Новая папка" : "Название папки")" @bind="folderName" maxlength="50" /><button class="icon-button" title="Сохранить папку" aria-label="Сохранить папку" @onclick="SaveFolder">@(editingFolder == null ? "+" : "✓")</button></div>
+        <div class="document-list">
+        @foreach (var document in FilteredDocuments) {
+            <button class="document-card @(currentId == document.Id ? "active" : "")" @onclick="() => Open(document)"><span class="doc-symbol">{ }</span><span class="doc-label"><strong>@document.Title</strong><small>@(document.Tags.Length > 0 ? string.Join(" · ", document.Tags) : "JSON-документ")</small></span></button>
+        }
+        @if (!FilteredDocuments.Any()) { <p class="muted empty-small">Документов пока нет.<br />Создайте и сохраните первый.</p> }
+        </div>
+    }
+    <div class="library-bottom"><span class="status-dot"></span> Локальное рабочее пространство</div>
+</aside>
+<section class="editor-area">
+    <div class="workspace-heading"><div><p class="eyebrow">РАБОЧЕЕ ПРОСТРАНСТВО</p><h1>Редактор JSON</h1></div><span class="draft-badge">@(dirty ? "Есть изменения" : currentId is null ? "Черновик" : "Сохранено")</span></div>
+    <div class="document-meta"><input class="document-title" aria-label="Название документа" placeholder="Название документа" @bind="title" @bind:after="MarkDirty" maxlength="100" /><div class="file-actions"><label class="button file-button">↑ Импорт<InputFile OnChange="Import" accept=".json,application/json,text/plain" /></label><button @onclick="Export">↓ Экспорт</button></div></div>
+    <div class="toolbar"><div><button class="tool-accent" @onclick="Format" disabled="@busy">Форматировать</button><button @onclick="Minify" disabled="@busy">Сжать</button><button @onclick="Validate" disabled="@busy">✓ Проверить</button><button @onclick="Copy">Копировать</button></div><button class="@(showTree ? "tool-accent" : "")" @onclick="ToggleTree">@(showTree ? "Скрыть дерево" : "Дерево →")</button></div>
+    <div class="editor-panels @(showTree ? "split" : "")">
+        <div class="text-panel"><div class="panel-heading"><span>JSON</span><span>UTF-8</span></div><textarea class="json-input" aria-label="JSON содержимое" spellcheck="false" maxlength="262144" value="@content" @oninput="ContentChanged" placeholder="Вставьте JSON или импортируйте файл…"></textarea></div>
+        @if (showTree) { <div class="tree-panel"><div class="panel-heading"><span>СТРУКТУРА</span><button class="quiet" @onclick="BuildTree">Обновить</button></div><div class="tree-content">@if (tree is not null) { <TreeNode Node="tree" /> @if (treeLimited) { <p class="muted">Показаны первые 1000 узлов.</p> } } else { <p class="muted">Проверьте JSON и обновите дерево.</p> }</div></div> }
+    </div>
+    <div class="editor-status"><span class="@(isError ? "error-text" : "")">@(isError ? "●" : "○") @validation</span><span>@content.Split('\n').Length строк · @Encoding.UTF8.GetByteCount(content) байт</span></div>
+    <div class="save-strip"><label>Папка<select @bind="selectedFolder" @bind:after="MarkDirty" disabled="@(owner == Guid.Empty)"><option value="">Без папки</option>@foreach(var folder in folders) { <option value="@folder.Id">@folder.Name</option> }</select></label><label class="tags-field">Теги<input aria-label="Теги документа" placeholder="Теги через запятую" @bind="tagText" @bind:after="MarkDirty" maxlength="220" /></label><button class="primary save-button" @onclick="Save" disabled="@(busy || owner == Guid.Empty)">@(busy ? "Сохранение…" : "Сохранить")</button><button class="danger-button" @onclick="DeleteCurrent" disabled="@(busy || currentId == null)">Удалить</button></div>
+    @if (owner == Guid.Empty) { <p class="hint"><a href="/account">Войдите</a> для сохранения. Редактирование и экспорт доступны без аккаунта.</p> }
+    @if (!string.IsNullOrEmpty(message)) { <div class="notice @(messageError ? "error" : "success")" role="status">@message</div> }
+</section>
+</div>
+@code {
+    private Guid owner;
+    private Guid? currentId, folderFilter, editingFolder;
+    private string title = "", content = "", tagText = "", selectedFolder = "", search = "", folderName = "";
+    private string validation = "Нажмите «Проверить»", message = "";
+    private bool dirty, busy, isError, messageError, showTree = true, treeLimited;
+    private TreeItem? tree;
+    private IJSObjectReference? module;
+    private IReadOnlyList<DocumentView> documents = [];
+    private IReadOnlyList<FolderView> folders = [];
+    private IEnumerable<DocumentView> FilteredDocuments => documents.Where(d =>
+        (folderFilter is null || d.FolderId == folderFilter) &&
+        (d.Title.Contains(search, StringComparison.OrdinalIgnoreCase) || d.Tags.Any(t => t.Contains(search, StringComparison.OrdinalIgnoreCase))));
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await Authentication.GetAuthenticationStateAsync();
+        Guid.TryParse(state.User.FindFirstValue(ClaimTypes.NameIdentifier), out owner);
+        await Refresh();
+    }
+    private async Task Run(Func<Task> action)
+    {
+        if (busy) return;
+        busy = true; message = ""; messageError = false;
+        try { await action(); }
+        catch (Exception ex) when (ex is DomainException or WorkspaceException or IOException or JSException)
+        { message = ex.Message; messageError = true; }
+        catch (Exception ex) { Logger.LogError(ex, "Workspace operation failed"); message = "Операция не выполнена. Текст остаётся в редакторе; попробуйте ещё раз."; messageError = true; }
+        finally { busy = false; }
+    }
+    private async Task Reload()
+    {
+        if (owner == Guid.Empty) return;
+        var state = await Workspace.LoadAsync(owner);
+        documents = state.Documents; folders = state.Folders;
+    }
+    private Task Refresh() => Run(Reload);
+    private void MarkDirty() => dirty = true;
+    private void ContentChanged(ChangeEventArgs e)
+    {
+        content = e.Value?.ToString() ?? ""; dirty = true; tree = null; validation = "Изменён · требуется проверка"; isError = false;
+    }
+    private void NewDocument()
+    {
+        currentId = null; title = ""; content = ""; tagText = ""; selectedFolder = ""; dirty = false; message = ""; tree = null; isError = false; validation = "Нажмите «Проверить»";
+    }
+    private void Open(DocumentView document)
+    {
+        currentId = document.Id; title = document.Title; content = document.Content;
+        selectedFolder = document.FolderId?.ToString() ?? ""; tagText = string.Join(", ", document.Tags); dirty = false; message = ""; BuildTree();
+    }
+    private void Validate()
+    {
+        try { JsonContent.Create(content); validation = "JSON корректный"; isError = false; }
+        catch (DomainException ex) { validation = ex.Message; isError = true; }
+    }
+    private void BuildTree()
+    {
+        Validate(); tree = null;
+        if (isError) return;
+        using var parsed = JsonDocument.Parse(content);
+        var budget = 1000; tree = TreeItem.Build(parsed.RootElement, "$", ref budget); treeLimited = budget == 0;
+    }
+    private void ToggleTree() { showTree = !showTree; if (showTree) BuildTree(); }
+    private Task Format() => Transform(true);
+    private Task Minify() => Transform(false);
+    private Task Transform(bool indented) => Run(() =>
+    {
+        var result = JsonContent.Create(content).Format(indented).Value;
+        if (result != content) { content = result; dirty = true; }
+        BuildTree(); return Task.CompletedTask;
+    });
+    private async Task<IJSObjectReference> Browser() => module ??= await JS.InvokeAsync<IJSObjectReference>("import", "./editor.js");
+    private Task Copy() => Run(async () => { await (await Browser()).InvokeVoidAsync("copy", content); message = "Текст скопирован."; });
+    private Task Export() => Run(async () =>
+    {
+        var name = string.Concat(title.Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '_' : c));
+        if (string.IsNullOrWhiteSpace(name)) name = "document";
+        if (!name.EndsWith(".json", StringComparison.OrdinalIgnoreCase)) name += ".json";
+        await (await Browser()).InvokeVoidAsync("download", name, content); message = "Файл передан браузеру для скачивания.";
+    });
+    private async Task Import(InputFileChangeEventArgs e)
+    {
+        await Run(async () =>
+        {
+            await using var stream = e.File.OpenReadStream(JsonContent.MaxBytes);
+            using var reader = new StreamReader(stream, new UTF8Encoding(false, true), detectEncodingFromByteOrderMarks: true);
+            var text = await reader.ReadToEndAsync();
+            if (Encoding.UTF8.GetByteCount(text) > JsonContent.MaxBytes) throw new DomainException("Файл превышает 256 КиБ в UTF-8.");
+            content = text; title = e.File.Name.Length > 100 ? e.File.Name[..100] : e.File.Name;
+            currentId = null; selectedFolder = ""; tagText = ""; dirty = true; BuildTree();
+            message = isError ? "Файл открыт как черновик. Исправьте JSON перед сохранением." : "Файл импортирован. Сохраните его в библиотеку.";
+        });
+    }
+    private Task Save() => Run(async () =>
+    {
+        var saved = await Workspace.SaveAsync(owner, currentId, title, content,
+            Guid.TryParse(selectedFolder, out var folder) ? folder : null,
+            tagText.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+        currentId = saved.Id; title = saved.Title; tagText = string.Join(", ", saved.Tags);
+        dirty = false; await Reload(); message = "Документ сохранён."; Validate();
+    });
+    private async Task DeleteCurrent()
+    {
+        if (currentId is not Guid id || !await JS.InvokeAsync<bool>("confirm", "Удалить документ из библиотеки? Это действие нельзя отменить.")) return;
+        await Run(async () => { await Workspace.DeleteDocumentAsync(owner, id); currentId = null; dirty = true; await Reload(); message = "Документ удалён. Текст оставлен в редакторе как черновик."; });
+    }
+    private void EditFolder(FolderView folder) { editingFolder = folder.Id; folderName = folder.Name; }
+    private Task SaveFolder() => Run(async () => { await Workspace.SaveFolderAsync(owner, editingFolder, folderName); editingFolder = null; folderName = ""; await Reload(); message = "Папка сохранена."; });
+    private async Task DeleteFolder(FolderView folder)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", $"Удалить папку «{folder.Name}»? Документы будут перемещены в корень.")) return;
+        await Run(async () =>
+        {
+            await Workspace.DeleteFolderAsync(owner, folder.Id); folderFilter = null; await Reload();
+            if (selectedFolder == folder.Id.ToString()) { selectedFolder = ""; dirty = true; }
+            message = "Папка удалена, документы сохранены.";
+        });
+    }
+    public async ValueTask DisposeAsync() { if (module is not null) { try { await module.DisposeAsync(); } catch (JSDisconnectedException) { } } }
+}

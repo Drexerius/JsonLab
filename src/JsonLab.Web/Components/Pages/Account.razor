@@ -1,0 +1,18 @@
+@page "/account"
+<PageTitle>Аккаунт · JSON Lab</PageTitle>
+<section class="auth-layout">
+    <div><p class="eyebrow">ВАШЕ РАБОЧЕЕ ПРОСТРАНСТВО</p><h1>Документы под рукой.<br /><span class="muted">Порядок в данных.</span></h1><p class="intro">Сохраняйте JSON, объединяйте документы в папки и находите нужное по тегам.</p><div class="auth-example"><span class="code-key">"workspace"</span>: {<br />&nbsp;&nbsp;<span class="code-key">"documents"</span>: <span class="code-value">"ваши"</span>,<br />&nbsp;&nbsp;<span class="code-key">"storage"</span>: <span class="code-value">"локально"</span><br />}</div></div>
+    <div class="auth-card"><h2>@(Register ? "Создать аккаунт" : "С возвращением")</h2><p class="muted">@(Register ? "Локальный аккаунт для ваших документов." : "Войдите в свою библиотеку документов.")</p>
+    @if (!string.IsNullOrEmpty(Error)) { <p class="notice error" role="alert">@Error</p> }
+    <form method="post" action="@(Register ? "/auth/register" : "/auth/login")">
+        <AntiforgeryToken />
+        <label>Логин<input name="username" autocomplete="username" required minlength="3" maxlength="32" placeholder="Например, student" /></label>
+        <label>Пароль<input name="password" type="password" autocomplete="@(Register ? "new-password" : "current-password")" required minlength="8" maxlength="128" placeholder="Не менее 8 символов" /></label>
+        <button class="primary full" type="submit">@(Register ? "Создать аккаунт" : "Войти") →</button>
+    </form><p class="auth-switch">@(Register ? "Уже есть аккаунт?" : "Пока нет аккаунта?") <a href="@(Register ? "/account" : "/account?mode=register")">@(Register ? "Войти" : "Зарегистрироваться")</a></p><a href="/" class="muted">← Продолжить без входа</a></div>
+</section>
+@code {
+    [SupplyParameterFromQuery(Name="mode")] public string? Mode { get; set; }
+    [SupplyParameterFromQuery(Name="error")] public string? Error { get; set; }
+    private bool Register => Mode == "register";
+}

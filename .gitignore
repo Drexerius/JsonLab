@@ -1,0 +1,11 @@
+**/bin/
+**/obj/
+.vs/
+**/App_Data/
+TestResults/
+*.user
+**/node_modules/
+jsonlab-run.log
+
+~$*
+*.log

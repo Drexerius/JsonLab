@@ -1,0 +1,9 @@
+@inherits LayoutComponentBase
+@using Microsoft.AspNetCore.Components.Authorization
+<header class="topbar">
+    <a class="brand" href="/"><span class="brand-icon">{ }</span> JSON<span class="brand-light">Lab</span></a>
+    <nav aria-label="Главная навигация"><NavLink href="/" Match="NavLinkMatch.All">Редактор</NavLink><NavLink href="/about">О проекте</NavLink></nav>
+    <div class="account-nav"><AuthorizeView><Authorized><span class="account-name">@context.User.Identity?.Name</span><form method="post" action="/auth/logout"><AntiforgeryToken /><button class="quiet" type="submit">Выйти</button></form></Authorized><NotAuthorized><a href="/account">Войти</a><a class="button small primary" href="/account?mode=register">Создать аккаунт</a></NotAuthorized></AuthorizeView></div>
+</header>
+<main>@Body</main>
+<div id="blazor-error-ui">Соединение прервано. Скопируйте текст документа и <a href="">обновите страницу</a>.<a class="dismiss">×</a></div>

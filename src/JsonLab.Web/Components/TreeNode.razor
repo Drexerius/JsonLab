@@ -1,0 +1,7 @@
+@if (Node.Children.Count > 0) {
+    <details open="@(Depth < 2)" class="tree-node"><summary><span class="code-key">@Node.Name</span> <span class="tree-kind">@Node.Value</span></summary><div class="tree-children">@foreach (var child in Node.Children) { <TreeNode Node="child" Depth="@(Depth + 1)" /> }</div></details>
+} else { <div class="tree-leaf"><span class="code-key">@Node.Name</span><span class="@(Node.IsString ? "code-value" : "code-literal")">@Node.Value</span></div> }
+@code {
+    [Parameter, EditorRequired] public TreeItem Node { get; set; } = null!;
+    [Parameter] public int Depth { get; set; }
+}

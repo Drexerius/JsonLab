@@ -1,0 +1,5 @@
+{
+  "status": "ok",
+  "data": { "id": 42, "name": "Пример", "active": true },
+  "items": [1, 2, 3]
+}
